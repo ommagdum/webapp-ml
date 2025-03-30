@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, request, jsonify
 import joblib
 import re
 import nltk
@@ -7,13 +7,12 @@ import json
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from nltk.stem import PorterStemmer
-
-from flask import Flask, request, jsonify
-from flask_cors import CORS  
+from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  
+CORS(app)  # Enable CORS for all routes
 
+# Configure SSL for NLTK downloads
 try:
     _create_unverified_https_context = ssl._create_unverified_context
 except AttributeError:
@@ -21,11 +20,11 @@ except AttributeError:
 else:
     ssl._create_default_https_context = _create_unverified_https_context
 
+# Download required NLTK data
 nltk.download('punkt')
 nltk.download('stopwords')
 
-app = Flask(__name__)
-
+# Load the model
 model = joblib.load('spam_detector_model.joblib')
 
 def preprocess_text(text):
@@ -65,33 +64,50 @@ def preprocess_text(text):
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    if request.method == 'POST':
-        try:
-            data = request.get_json()
-            if not data or 'email_text' not in data:
-                return jsonify({
-                    "error": "No email text provided",
-                    "status": "error"
-                }), 400 
-
-            email_text = data['email_text']
+    try:
+        data = request.get_json()
         
-            processed_text = preprocess_text(email_text)
-        
-            prediction = model.predict([processed_text])[0]
-            probability = model.predict_proba([processed_text])[0][1] 
-        
-            spam_label = "spam" if prediction == 1 else "ham"
-            spam_probability = float(probability * 100)  # Convert numpy float to Python float
-
+        if not data or 'email_text' not in data:
             return jsonify({
-            "prediction": spam_label,
-            "probability": spam_probability,
-            "status": "success"
+                'success': False,
+                'error': 'Missing email_text'
+            }), 400
+        
+        email_text = data['email_text']
+        
+        if not email_text:
+            return jsonify({
+                'success': False,
+                'error': 'Empty email_text'
+            }), 400
+        
+        processed_text = preprocess_text(email_text)
+        
+        prediction = model.predict([processed_text])[0]
+        probability = model.predict_proba([processed_text])[0][1]
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'prediction': int(prediction),
+                'probability': float(probability)
+            }
         })
     
-        except Exception as e:
-            return jsonify({"error": str(e), "status": "error"}), 500
+    except Exception as e:
+        print(f"Error processing request: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({
+        'status': 'up',
+        'message': 'ML service is running'
+    })
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    print("Starting ML service on port 5001...")
+    app.run(host='0.0.0.0', port=5001, debug=False)
