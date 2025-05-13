@@ -1,0 +1,10 @@
+{
+  "versions": [
+    {
+      "version_id": "initial_model",
+      "accuracy": 0.9,
+      "timestamp": "2025-05-07T22:19:44"
+    }
+  ],
+  "current_version": "initial_model"
+}
