@@ -1,3 +1,20 @@
+"""ML Service API Application
+
+This module implements a Flask-based REST API service for machine learning predictions.
+It provides endpoints for spam detection, model health checks, and integrates with the
+model management system for automatic model updates and versioning.
+
+The application includes:
+- Dynamic model loading with version tracking
+- Background thread for model updates monitoring
+- Text preprocessing pipeline for prediction requests
+- RESTful API endpoints for predictions and health checks
+- Error handling and graceful degradation
+
+The service automatically initializes with the latest model version and
+periodically checks for model updates without requiring a restart.
+"""
+
 from ml.management.model_manager import ModelManager
 import threading
 import time
@@ -33,7 +50,18 @@ current_model_version = None
 model_manager = ModelManager(models_dir='models')
 
 def initialize_model_manager():
-    """Initialize the model manager with the initial model if needed"""
+    """Initialize the model manager with the initial model if needed.
+    
+    This function checks if the model metadata exists and initializes it if needed.
+    It follows this process:
+    1. Check if metadata file exists
+    2. If not, look for an initial_model.pkl in the models directory
+    3. If that's not found, look for a default model (spam_detector_model.joblib)
+    4. If found, copy it to the models directory and initialize metadata
+    
+    The function handles the bootstrapping process for the model management system,
+    ensuring that a valid model is available when the service starts.
+    """
     try:
         # Check if metadata exists
         if not os.path.exists(model_manager.metadata_file):
@@ -57,7 +85,26 @@ def initialize_model_manager():
         print(f"Error initializing model manager: {str(e)}")
 
 def load_model():
-    """Load the current model using the ModelManager"""
+    """Load the current model using the ModelManager.
+    
+    This function loads the current model version from the model manager.
+    It only reloads the model if the version has changed since the last load.
+    If loading fails and no model is currently loaded, it attempts to fall back
+    to a default model to ensure the service remains operational.
+    
+    The function handles:
+    - Checking the current model version in metadata
+    - Loading the model only if version has changed (optimization)
+    - Graceful fallback to default model if primary loading fails
+    - Comprehensive error handling and logging
+    
+    Returns:
+        str: The version ID of the currently loaded model
+        
+    Raises:
+        FileNotFoundError: If no model can be found (primary or fallback)
+        Exception: For other errors during model loading that cannot be recovered from
+    """
     global model, current_model_version
     
     try:
@@ -98,7 +145,15 @@ def load_model():
     return current_model_version
 
 def model_watcher():
-    """Background thread that periodically checks for model updates"""
+    """Background thread that periodically checks for model updates.
+    
+    Runs as a daemon thread to periodically check for model updates
+    by calling load_model() every 60 seconds. This ensures the service
+    always uses the most recent model version without requiring a restart.
+    
+    If an error occurs during model loading, it is logged but the thread
+    continues running to try again in the next cycle.
+    """
     while True:
         try:
             load_model()
@@ -110,7 +165,25 @@ def model_watcher():
 
 def preprocess_text(text):
     """
-    Function to preprocess the text data
+    Preprocess text data for model prediction.
+    
+    Applies a series of text preprocessing steps to clean and normalize text data
+    before passing it to the prediction model. The preprocessing pipeline includes:
+    
+    1. Lowercase conversion - Normalizes case differences
+    2. Email removal - Removes email addresses which could contain personal information
+    3. URL removal - Removes web links which are not relevant for classification
+    4. Special character removal - Keeps only alphabetic characters and spaces
+    5. Whitespace normalization - Standardizes spacing between words
+    6. Tokenization - Splits text into individual words
+    7. Stopword removal - Removes common words that don't add meaning
+    8. Stemming - Reduces words to their root form
+    
+    Args:
+        text (str): The raw text to preprocess
+        
+    Returns:
+        str: The preprocessed text ready for model prediction
     """
     # Convert to lowercase
     text = text.lower()
@@ -165,6 +238,18 @@ model_thread.start()
 
 @app.route('/health', methods=['GET'])
 def health():
+    """Health check endpoint for the ML service.
+    
+    Returns information about the service status, including whether
+    the model is loaded and which version is currently active.
+    
+    Returns:
+        JSON: A response containing service status information:
+            - status: 'up' if service is running
+            - message: Description of service status
+            - model_version: Current active model version
+            - model_status: Whether model is loaded or not
+    """
     model_status = "loaded" if model is not None else "not loaded"
     return jsonify({
         'status': 'up',
@@ -175,6 +260,31 @@ def health():
 
 @app.route('/predict', methods=['POST'])
 def predict():
+    """Prediction endpoint for spam detection.
+    
+    Accepts a POST request with JSON payload containing 'email_text',
+    processes the text, and returns a prediction (spam or not spam)
+    along with the probability score.
+    
+    Request Body:
+        JSON with the following fields:
+            - email_text: The text content to analyze for spam detection
+    
+    Returns:
+        JSON: A response containing:
+            - success: Boolean indicating if the request was successful
+            - data: (if successful)
+                - prediction: 1 for spam, 0 for not spam
+                - probability: Confidence score (0-1) for spam classification
+                - model_version: Version of the model used for prediction
+            - error: (if unsuccessful) Error message
+            
+    Response Codes:
+        - 200: Successful prediction
+        - 400: Missing or invalid input
+        - 500: Server error during processing
+        - 503: Model not available
+    """
     try:
         # Check if model is loaded
         if model is None:
