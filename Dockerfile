@@ -4,21 +4,24 @@ FROM python:3.10-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies (fixes Cython issues)
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
+# Install system deps (for nltk & joblib)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+       build-essential \
+   && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install
+# Copy and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy app code
+# Pre-download NLTK data so your service won't block at runtime
+RUN python -m nltk.downloader punkt stopwords
+
+# Copy the rest of your application code
 COPY . .
 
-# Expose port
-EXPOSE 8080
+# Expose the port your Flask app runs on
+EXPOSE 5001
 
-# Start app with gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "app:app"]
+# Run the Flask application
+CMD ["python", "app.py"]

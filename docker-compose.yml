@@ -1,0 +1,11 @@
+services:
+  webapp-ml:
+    build: .
+    ports:
+      - "5001:5001"
+    environment:
+      # Prevent Python from buffering stdout/stderr (helps with logging)
+      - PYTHONUNBUFFERED=1
+    # Uncomment to persist your models directory on the host:
+    # volumes:
+    #   - ./models:/app/models
