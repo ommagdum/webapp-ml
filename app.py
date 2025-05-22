@@ -45,16 +45,15 @@ nltk.download('punkt')
 nltk.download('stopwords')
 
 # Global variables for model management
-# Initialize model manager
+model = None
+version = None
 model_manager = ModelManager(models_dir='models')
 
 def get_model():
     """Thread-safe model getter that ensures proper initialization"""
-    if not hasattr(get_model, "model"):
-        get_model.model = None
-        get_model.version = None
+    global model, version
     
-    if get_model.model is None:
+    if model is None:
         try:
             metadata = model_manager.load_metadata()
             version = metadata.get('current_version')
@@ -63,33 +62,32 @@ def get_model():
                 print("No model version found in metadata. Using initial_model.")
                 version = 'initial_model'
                 model_path = os.path.join(model_manager.models_dir, f"{version}.pkl")
-            elif version != get_model.version:
+            else:
                 print(f"Loading model version: {version}")
                 model_path = os.path.join(model_manager.models_dir, f"{version}.pkl")
                 
-                if os.path.exists(model_path):
-                    get_model.model = joblib.load(model_path)
-                    
-                    # Check if model is a pipeline with a vectorizer
-                    if hasattr(get_model.model, 'named_steps') and 'vect' in get_model.model.named_steps:
-                        if not hasattr(get_model.model.named_steps['vect'], 'idf_') or get_model.model.named_steps['vect'].idf_ is None:
-                            print("Warning: TF-IDF vectorizer not fitted. Attempting to initialize...")
-                            get_model.model.named_steps['vect'].fit(["dummy text for initialization"])
-                    elif hasattr(get_model.model, 'vectorizer') and hasattr(get_model.model.vectorizer, 'idf_'):
-                        if get_model.model.vectorizer.idf_ is None:
-                            print("Warning: TF-IDF vectorizer not fitted. Attempting to initialize...")
-                            get_model.model.vectorizer.fit(["dummy text for initialization"])
-                    
-                    get_model.version = version
-                    print(f"Successfully loaded model version: {version}")
-                else:
-                    print(f"Model file not found: {model_path}")
-                    raise FileNotFoundError(f"Model file not found: {model_path}")
+            if os.path.exists(model_path):
+                model = joblib.load(model_path)
+                
+                # Check if model is a pipeline with a vectorizer
+                if hasattr(model, 'named_steps') and 'vect' in model.named_steps:
+                    if not hasattr(model.named_steps['vect'], 'idf_') or model.named_steps['vect'].idf_ is None:
+                        print("Warning: TF-IDF vectorizer not fitted. Attempting to initialize...")
+                        model.named_steps['vect'].fit(["dummy text for initialization"])
+                elif hasattr(model, 'vectorizer') and hasattr(model.vectorizer, 'idf_'):
+                    if model.vectorizer.idf_ is None:
+                        print("Warning: TF-IDF vectorizer not fitted. Attempting to initialize...")
+                        model.vectorizer.fit(["dummy text for initialization"])
+                
+                print(f"Successfully loaded model version: {version}")
+            else:
+                print(f"Model file not found: {model_path}")
+                raise FileNotFoundError(f"Model file not found: {model_path}")
         except Exception as e:
             print(f"Error loading model: {str(e)}")
             raise
     
-    return get_model.model, version
+    return model, version
 
 def initialize_model_manager():
     """Initialize the model manager with the initial model if needed.
@@ -149,6 +147,7 @@ def load_model():
     """
     try:
         # Get the model and version from get_model()
+        global model, version
         model, version = get_model()
         
         if model is None:
