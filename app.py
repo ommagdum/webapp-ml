@@ -61,25 +61,43 @@ def get_model():
             if version is None:
                 print("No model version found in metadata. Using initial_model.")
                 version = 'initial_model'
-                model_path = os.path.join(model_manager.models_dir, f"{version}.pkl")
+                # Try both .joblib and .pkl extensions
+                model_path = os.path.join(model_manager.models_dir, f"{version}.joblib")
+                if not os.path.exists(model_path):
+                    model_path = os.path.join(model_manager.models_dir, f"{version}.pkl")
             else:
                 print(f"Loading model version: {version}")
-                model_path = os.path.join(model_manager.models_dir, f"{version}.pkl")
+                # Try both .joblib and .pkl extensions
+                model_path = os.path.join(model_manager.models_dir, f"{version}.joblib")
+                if not os.path.exists(model_path):
+                    model_path = os.path.join(model_manager.models_dir, f"{version}.pkl")
                 
             if os.path.exists(model_path):
                 model = joblib.load(model_path)
+                print(f"Successfully loaded model version: {version} from {model_path}")
                 
-                # Check if model is a pipeline with a vectorizer
+                # The vectorizer initialization code can remain as a fallback,
+                # but it shouldn't be needed anymore
                 if hasattr(model, 'named_steps') and 'vect' in model.named_steps:
                     if not hasattr(model.named_steps['vect'], 'idf_') or model.named_steps['vect'].idf_ is None:
                         print("Warning: TF-IDF vectorizer not fitted. Attempting to initialize...")
-                        model.named_steps['vect'].fit(["dummy text for initialization"])
+                        model.named_steps['vect'].fit([
+                            "spam email free offer money", 
+                            "normal email meeting schedule", 
+                            "business proposal contract agreement",
+                            "personal message family friend",
+                            "urgent action required immediately"
+                        ])
                 elif hasattr(model, 'vectorizer') and hasattr(model.vectorizer, 'idf_'):
                     if model.vectorizer.idf_ is None:
                         print("Warning: TF-IDF vectorizer not fitted. Attempting to initialize...")
-                        model.vectorizer.fit(["dummy text for initialization"])
-                
-                print(f"Successfully loaded model version: {version}")
+                        model.vectorizer.fit([
+                            "spam email free offer money", 
+                            "normal email meeting schedule", 
+                            "business proposal contract agreement",
+                            "personal message family friend",
+                            "urgent action required immediately"
+                        ])
             else:
                 print(f"Model file not found: {model_path}")
                 raise FileNotFoundError(f"Model file not found: {model_path}")
@@ -95,7 +113,7 @@ def initialize_model_manager():
     This function checks if the model metadata exists and initializes it if needed.
     It follows this process:
     1. Check if metadata file exists
-    2. If not, look for an initial_model.pkl in the models directory
+    2. If not, look for an initial_model.joblib or initial_model.pkl in the models directory
     3. If that's not found, look for a default model (spam_detector_model.joblib)
     4. If found, copy it to the models directory and initialize metadata
     
@@ -105,19 +123,25 @@ def initialize_model_manager():
     try:
         # Check if metadata exists
         if not os.path.exists(model_manager.metadata_file):
-            # Check if initial_model.pkl exists in models directory
-            initial_model_path = os.path.join(model_manager.models_dir, 'initial_model.pkl')
-            if os.path.exists(initial_model_path):
+            # Check if initial_model exists in models directory (try both extensions)
+            initial_model_path_joblib = os.path.join(model_manager.models_dir, 'initial_model.joblib')
+            initial_model_path_pkl = os.path.join(model_manager.models_dir, 'initial_model.pkl')
+            
+            if os.path.exists(initial_model_path_joblib):
                 # Initialize metadata with this model
                 model_manager.add_version('initial_model', 0.9)  # Assuming default accuracy
-                print("Initialized metadata with initial_model")
+                print("Initialized metadata with initial_model.joblib")
+            elif os.path.exists(initial_model_path_pkl):
+                # Initialize metadata with this model
+                model_manager.add_version('initial_model', 0.9)  # Assuming default accuracy
+                print("Initialized metadata with initial_model.pkl")
             else:
                 # Check if we have a default model
                 default_model_path = 'spam_detector_model.joblib'
                 if os.path.exists(default_model_path):
                     # Copy default model to models directory
                     os.makedirs(model_manager.models_dir, exist_ok=True)
-                    new_model_path = os.path.join(model_manager.models_dir, 'initial_model.pkl')
+                    new_model_path = os.path.join(model_manager.models_dir, 'initial_model.joblib')
                     joblib.dump(joblib.load(default_model_path), new_model_path)
                     model_manager.add_version('initial_model', 0.9)
                     print(f"Copied default model to {new_model_path} and initialized metadata")
@@ -302,7 +326,7 @@ def predict():
     """
     try:
         # Get model instance (thread-safe)
-        model, version = get_model()
+        model, current_version = get_model()
         
         if model is None:
             return jsonify({
@@ -336,7 +360,7 @@ def predict():
             'data': {
                 'prediction': int(prediction),
                 'probability': float(probability),
-                'model_version': get_model.version
+                'model_version': current_version
             }
         })
     

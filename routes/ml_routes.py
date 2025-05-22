@@ -75,7 +75,7 @@ def retrain():
     try:
         training_data = request.get_json()
         new_version = datetime.now().strftime('%Y%m%d_%H%M')
-        model_path = os.path.join(model_manager.models_dir, f"{new_version}.pkl")
+        model_path = os.path.join(model_manager.models_dir, f"{new_version}.joblib")  # Default to .joblib
         
         current_model = get_current_model()
         accuracy = retrain_model(current_model, training_data, model_path)

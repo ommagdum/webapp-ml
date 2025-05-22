@@ -92,6 +92,15 @@ def retrain_model(current_model, new_training_data, save_path):
     predictions = current_model.predict(X_new)
     accuracy = accuracy_score(y_new, predictions)
     
+    # Make sure the save path uses .joblib or .pkl extension
+    if not save_path.endswith('.joblib') and not save_path.endswith('.pkl'):
+        save_path = save_path + '.joblib'  # Default to .joblib
+    
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    
+    # Save the model
     joblib.dump(current_model, save_path)
+    print(f"Model saved to {save_path} with accuracy: {accuracy:.4f}")
     
     return accuracy
