@@ -45,9 +45,47 @@ nltk.download('punkt')
 nltk.download('stopwords')
 
 # Global variables for model management
-model = None
-current_model_version = None
+# Initialize model manager
 model_manager = ModelManager(models_dir='models')
+
+def get_model():
+    """Thread-safe model getter that ensures proper initialization"""
+    if not hasattr(get_model, "model"):
+        get_model.model = None
+        get_model.version = None
+    
+    if get_model.model is None:
+        try:
+            metadata = model_manager.load_metadata()
+            version = metadata.get('current_version')
+            
+            if version != get_model.version:
+                print(f"Loading model version: {version}")
+                model_path = os.path.join(model_manager.models_dir, f"{version}.pkl")
+                
+                if os.path.exists(model_path):
+                    get_model.model = joblib.load(model_path)
+                    
+                    # Check if model is a pipeline with a vectorizer
+                    if hasattr(get_model.model, 'named_steps') and 'vect' in get_model.model.named_steps:
+                        if not hasattr(get_model.model.named_steps['vect'], 'idf_') or get_model.model.named_steps['vect'].idf_ is None:
+                            print("Warning: TF-IDF vectorizer not fitted. Attempting to initialize...")
+                            get_model.model.named_steps['vect'].fit(["dummy text for initialization"])
+                    elif hasattr(get_model.model, 'vectorizer') and hasattr(get_model.model.vectorizer, 'idf_'):
+                        if get_model.model.vectorizer.idf_ is None:
+                            print("Warning: TF-IDF vectorizer not fitted. Attempting to initialize...")
+                            get_model.model.vectorizer.fit(["dummy text for initialization"])
+                    
+                    get_model.version = version
+                    print(f"Successfully loaded model version: {version}")
+                else:
+                    print(f"Model file not found: {model_path}")
+                    raise FileNotFoundError(f"Model file not found: {model_path}")
+        except Exception as e:
+            print(f"Error loading model: {str(e)}")
+            raise
+    
+    return get_model.model
 
 def initialize_model_manager():
     """Initialize the model manager with the initial model if needed.
@@ -286,15 +324,8 @@ def predict():
         - 503: Model not available
     """
     try:
-        # Check if model is loaded
-        if model is None:
-            # Try to load the model again
-            load_model()
-            if model is None:
-                return jsonify({
-                    'success': False,
-                    'error': 'Model not loaded. Please try again later.'
-                }), 503
+        # Get model instance (thread-safe)
+        model = get_model()
         
         data = request.get_json()
         
@@ -322,7 +353,7 @@ def predict():
             'data': {
                 'prediction': int(prediction),
                 'probability': float(probability),
-                'model_version': current_model_version
+                'model_version': get_model.version
             }
         })
     
