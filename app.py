@@ -59,7 +59,11 @@ def get_model():
             metadata = model_manager.load_metadata()
             version = metadata.get('current_version')
             
-            if version != get_model.version:
+            if version is None:
+                print("No model version found in metadata. Using initial_model.")
+                version = 'initial_model'
+                model_path = os.path.join(model_manager.models_dir, f"{version}.pkl")
+            elif version != get_model.version:
                 print(f"Loading model version: {version}")
                 model_path = os.path.join(model_manager.models_dir, f"{version}.pkl")
                 
@@ -85,7 +89,7 @@ def get_model():
             print(f"Error loading model: {str(e)}")
             raise
     
-    return get_model.model
+    return get_model.model, version
 
 def initialize_model_manager():
     """Initialize the model manager with the initial model if needed.
@@ -325,7 +329,13 @@ def predict():
     """
     try:
         # Get model instance (thread-safe)
-        model = get_model()
+        model, version = get_model()
+        
+        if model is None:
+            return jsonify({
+                'success': False,
+                'error': 'Model not available'
+            }), 503
         
         data = request.get_json()
         
