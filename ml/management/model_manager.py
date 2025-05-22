@@ -20,7 +20,13 @@ Typical usage example:
 
 import os
 import json
+import joblib
+import logging
 from datetime import datetime
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class ModelManager:
     def __init__(self, models_dir='models'):
@@ -28,11 +34,43 @@ class ModelManager:
         
         Args:
             models_dir (str): Directory path where models and metadata will be stored.
-                              Defaults to 'models'.
+                            Defaults to 'models'.
         """
-        self.models_dir = models_dir
-        self.metadata_file = os.path.join(models_dir, 'metadata.json')
+        self.models_dir = os.path.abspath(models_dir)
+        self.metadata_file = os.path.join(self.models_dir, 'metadata.json')
+        
+        # Ensure models directory exists
+        os.makedirs(self.models_dir, exist_ok=True)
+        logger.info(f"Initializing ModelManager with models directory: {self.models_dir}")
+        
+        # Initialize metadata
         self.init_metadata()
+        
+        # Verify the current model can be loaded
+        self.verify_model_loading()
+        
+    def verify_model_loading(self):
+        """Verify that the current model can be loaded."""
+        current_version = self.load_metadata().get('current_version')
+        if current_version:
+            model_path = self.get_model_path(current_version)
+            try:
+                joblib.load(model_path)
+                logger.info(f"Successfully verified model at {model_path}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to load model {current_version} from {model_path}: {str(e)}")
+                return False
+        return False
+        
+    def get_model_path(self, version):
+        """Get the path to a model file, trying both .joblib and .pkl extensions."""
+        # Try .joblib first, then .pkl
+        for ext in ['.joblib', '.pkl']:
+            path = os.path.join(self.models_dir, f"{version}{ext}")
+            if os.path.exists(path):
+                return path
+        raise FileNotFoundError(f"No model file found for version {version} in {self.models_dir}")
 
     def init_metadata(self):
         """Initialize metadata file if it doesn't exist.
@@ -40,30 +78,67 @@ class ModelManager:
         Creates a new metadata.json file with empty versions list and
         null current_version if the file doesn't already exist.
         """
-        if not os.path.exists(self.metadata_file):
-            metadata = {
-                'versions': [],
-                'current_version': None
-            }
-            self.save_metadata(metadata)
+        try:
+            if not os.path.exists(self.metadata_file):
+                metadata = {
+                    'versions': [],
+                    'current_version': None
+                }
+                self.save_metadata(metadata)
+                logger.info(f"Initialized new metadata file at {self.metadata_file}")
+            else:
+                # Verify metadata file is valid
+                self.load_metadata()
+                logger.info(f"Loaded existing metadata from {self.metadata_file}")
+        except Exception as e:
+            logger.error(f"Error initializing metadata: {str(e)}")
+            raise
 
     def save_metadata(self, metadata):
-        """Save metadata to the metadata file.
-        
-        Args:
-            metadata (dict): The metadata dictionary to save.
-        """
-        with open(self.metadata_file, 'w') as f:
-            json.dump(metadata, f, indent=2)
+        """Save metadata to the metadata file."""
+        try:
+            with open(self.metadata_file, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            logger.debug(f"Saved metadata to {self.metadata_file}")
+        except Exception as e:
+            logger.error(f"Failed to save metadata to {self.metadata_file}: {str(e)}")
+            raise
 
     def load_metadata(self):
         """Load metadata from the metadata file.
         
         Returns:
             dict: The metadata dictionary containing version history and current version.
+            
+        Raises:
+            FileNotFoundError: If metadata file doesn't exist
+            json.JSONDecodeError: If metadata file is corrupted
         """
-        with open(self.metadata_file, 'r') as f:
-            return json.load(f)
+        try:
+            if not os.path.exists(self.metadata_file):
+                raise FileNotFoundError(f"Metadata file not found: {self.metadata_file}")
+                
+            with open(self.metadata_file, 'r') as f:
+                metadata = json.load(f)
+                
+            # Validate metadata structure
+            if not isinstance(metadata, dict) or 'versions' not in metadata:
+                raise ValueError("Invalid metadata format: 'versions' key not found")
+                
+            return metadata
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse metadata file {self.metadata_file}: {str(e)}")
+            # Create a backup of the corrupted file
+            backup_file = f"{self.metadata_file}.corrupt.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            os.rename(self.metadata_file, backup_file)
+            logger.error(f"Created backup of corrupted metadata file at {backup_file}")
+            # Initialize new metadata
+            self.init_metadata()
+            return self.load_metadata()
+        except Exception as e:
+            logger.error(f"Unexpected error loading metadata: {str(e)}")
+            raise
 
     def add_version(self, version_id, accuracy):
         """Add a new model version to the version history.

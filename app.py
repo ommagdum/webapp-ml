@@ -55,35 +55,30 @@ def get_model():
     
     if model is None:
         try:
-            # Suppress specific warnings for cleaner logs
-            import warnings
-            from sklearn.exceptions import InconsistentVersionWarning
-            warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
-            
-            print("Loading model metadata...")
+            # Get the current model version from metadata
             metadata = model_manager.load_metadata()
             version = metadata.get('current_version')
             
             if version is None:
                 print("No model version found in metadata. Using initial_model.")
                 version = 'initial_model'
-                # Try both .joblib and .pkl extensions
-                model_path = os.path.join(model_manager.models_dir, f"{version}.joblib")
-                if not os.path.exists(model_path):
-                    model_path = os.path.join(model_manager.models_dir, f"{version}.pkl")
-            else:
-                print(f"Loading model version: {version}")
-                # Try both .joblib and .pkl extensions
-                model_path = os.path.join(model_manager.models_dir, f"{version}.joblib")
-                if not os.path.exists(model_path):
-                    model_path = os.path.join(model_manager.models_dir, f"{version}.pkl")
+            
+            print(f"Loading model version: {version}")
+            
+            try:
+                # Get the model path using the ModelManager
+                model_path = model_manager.get_model_path(version)
+                print(f"Loading model from: {model_path}")
                 
-            if os.path.exists(model_path):
+                # Load the model
                 model = joblib.load(model_path)
-                print(f"Successfully loaded model version: {version} from {model_path}")
+                print(f"Successfully loaded model version: {version}")
                 
-                # The vectorizer initialization code can remain as a fallback,
-                # but it shouldn't be needed anymore
+                # Verify the model has the required predict method
+                if not hasattr(model, 'predict'):
+                    raise AttributeError("Loaded model does not have a 'predict' method")
+                
+                # Initialize vectorizer if needed (fallback)
                 if hasattr(model, 'named_steps') and 'vect' in model.named_steps:
                     if not hasattr(model.named_steps['vect'], 'idf_') or model.named_steps['vect'].idf_ is None:
                         print("Warning: TF-IDF vectorizer not fitted. Attempting to initialize...")
@@ -94,29 +89,26 @@ def get_model():
                             "personal message family friend",
                             "urgent action required immediately"
                         ])
-                elif hasattr(model, 'vectorizer') and hasattr(model.vectorizer, 'idf_'):
-                    if model.vectorizer.idf_ is None:
-                        print("Warning: TF-IDF vectorizer not fitted. Attempting to initialize...")
-                        model.vectorizer.fit([
-                            "spam email free offer money", 
-                            "normal email meeting schedule", 
-                            "business proposal contract agreement",
-                            "personal message family friend",
-                            "urgent action required immediately"
-                        ])
-            else:
-                error_msg = (
-                    f"Model file not found: {model_path}\n"
-                    f"Available files in models directory: {os.listdir(model_manager.models_dir) if os.path.exists(model_manager.models_dir) else 'Directory not found'}"
-                )
+                
+                return model, version
+                
+            except FileNotFoundError as e:
+                error_msg = f"Model file not found for version {version}"
                 print(error_msg)
-                raise FileNotFoundError(error_msg)
+                return None, version
+                
+            except Exception as e:
+                error_msg = f"Error loading model: {str(e)}\nError type: {type(e).__name__}"
+                print(error_msg)
+                import traceback
+                traceback.print_exc()
+                return None, version
+                
         except Exception as e:
-            error_msg = f"Error loading model: {str(e)}\nError type: {type(e).__name__}"
+            error_msg = f"Error in get_model: {str(e)}\nError type: {type(e).__name__}"
             print(error_msg)
             import traceback
             traceback.print_exc()
-            # Return None for model if there's an error, but don't crash
             return None, version
     
     return model, version
