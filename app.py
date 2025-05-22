@@ -50,7 +50,11 @@ version = None
 model_manager = ModelManager(models_dir='models')
 
 def get_model():
-    """Thread-safe model getter that ensures proper initialization"""
+    """Thread-safe model getter that ensures proper initialization
+    
+    Returns:
+        tuple: (model, version) where model is the loaded model and version is the model version
+    """
     global model, version
     
     if model is None:
@@ -80,15 +84,21 @@ def get_model():
                 
                 # Initialize vectorizer if needed (fallback)
                 if hasattr(model, 'named_steps') and 'vect' in model.named_steps:
-                    if not hasattr(model.named_steps['vect'], 'idf_') or model.named_steps['vect'].idf_ is None:
-                        print("Warning: TF-IDF vectorizer not fitted. Attempting to initialize...")
-                        model.named_steps['vect'].fit([
-                            "spam email free offer money", 
-                            "normal email meeting schedule", 
+                    vectorizer = model.named_steps['vect']
+                    if not hasattr(vectorizer, 'idf_') or vectorizer.idf_ is None:
+                        print("Warning: TF-IDF vectorizer not fitted. Initializing with sample data...")
+                        sample_texts = [
+                            "spam email free offer money win prize", 
+                            "normal email meeting schedule reminder", 
                             "business proposal contract agreement",
-                            "personal message family friend",
+                            "personal message family friend hello",
                             "urgent action required immediately"
-                        ])
+                        ]
+                        # Fit the vectorizer with sample data
+                        vectorizer.fit(sample_texts)
+                        # Save the model with the fitted vectorizer
+                        joblib.dump(model, model_path)
+                        print("Re-saved model with fitted vectorizer")
                 
                 return model, version
                 
@@ -293,15 +303,75 @@ def health():
             - status: 'up' if service is running
             - message: Description of service status
             - model_version: Current active model version
-            - model_status: Whether model is loaded or not
+            - model_status: Detailed model status
+            - vectorizer_status: Status of the TF-IDF vectorizer
+            - model_has_predict: Whether model has predict method
+            - model_has_predict_proba: Whether model has predict_proba method
+            - service_ready: Whether service is fully operational
     """
-    model_status = "loaded" if model is not None else "not loaded"
-    return jsonify({
-        'status': 'up',
-        'message': 'ML service is running',
-        'model_version': version,
-        'model_status': model_status
-    })
+    try:
+        # Try to get the current model and version
+        current_model, current_version = get_model()
+        model_loaded = current_model is not None
+        
+        # Check model capabilities
+        has_predict = hasattr(current_model, 'predict') if model_loaded else False
+        has_predict_proba = hasattr(current_model, 'predict_proba') if model_loaded else False
+        
+        # Check vectorizer status if available
+        vectorizer_status = 'n/a'
+        if model_loaded and hasattr(current_model, 'named_steps') and 'vect' in current_model.named_steps:
+            vectorizer = current_model.named_steps['vect']
+            if hasattr(vectorizer, 'idf_') and vectorizer.idf_ is not None:
+                vectorizer_status = 'fitted'
+            else:
+                vectorizer_status = 'not_fitted'
+        
+        # Determine overall service readiness
+        service_ready = model_loaded and has_predict and has_predict_proba
+        if model_loaded and hasattr(current_model, 'named_steps') and 'vect' in current_model.named_steps:
+            service_ready = service_ready and (vectorizer_status == 'fitted')
+        
+        # Prepare response
+        response = {
+            'status': 'up',
+            'message': 'ML service is running',
+            'model_version': current_version,
+            'model_status': 'loaded' if model_loaded else 'not_loaded',
+            'vectorizer_status': vectorizer_status,
+            'model_has_predict': has_predict,
+            'model_has_predict_proba': has_predict_proba,
+            'service_ready': service_ready,
+            'timestamp': time.time()
+        }
+        
+        # Add detailed error information if service is not ready
+        if not service_ready:
+            if not model_loaded:
+                response['error'] = 'Model not loaded'
+            elif not has_predict:
+                response['error'] = 'Model missing predict method'
+            elif not has_predict_proba:
+                response['error'] = 'Model missing predict_proba method'
+            elif vectorizer_status == 'not_fitted':
+                response['error'] = 'TF-IDF vectorizer not fitted'
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        import traceback
+        error_details = str(e)
+        traceback_details = traceback.format_exc()
+        print(f"Health check error: {error_details}\n{traceback_details}")
+        
+        return jsonify({
+            'status': 'error',
+            'message': 'Error checking service health',
+            'error': error_details,
+            'model_status': 'error',
+            'service_ready': False,
+            'timestamp': time.time()
+        }), 500
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -323,6 +393,7 @@ def predict():
                 - probability: Confidence score (0-1) for spam classification
                 - model_version: Version of the model used for prediction
             - error: (if unsuccessful) Error message
+            - status: Additional status information for debugging
             
     Response Codes:
         - 200: Successful prediction
@@ -341,6 +412,15 @@ def predict():
                     'error': 'Model not loaded. Please check server logs for details.',
                     'status': 'model_unavailable'
                 }), 503
+                
+            # Verify model has required methods
+            if not all(hasattr(model, method) for method in ['predict', 'predict_proba']):
+                return jsonify({
+                    'success': False,
+                    'error': 'Model is missing required prediction methods',
+                    'status': 'model_invalid'
+                }), 500
+                
         except Exception as e:
             error_msg = f"Failed to load model: {str(e)}"
             print(f"Error in predict endpoint: {error_msg}")
@@ -353,41 +433,79 @@ def predict():
                 'status': 'model_loading_error'
             }), 500
         
+        # Validate input
         data = request.get_json()
-        
         if not data or 'email_text' not in data:
             return jsonify({
                 'success': False,
-                'error': 'Missing email_text'
+                'error': 'Missing required field: email_text',
+                'status': 'invalid_input'
             }), 400
         
-        email_text = data['email_text']
-        
+        email_text = data['email_text'].strip()
         if not email_text:
             return jsonify({
                 'success': False,
-                'error': 'Empty email_text'
+                'error': 'Email text cannot be empty',
+                'status': 'empty_input'
             }), 400
         
-        processed_text = preprocess_text(email_text)
-        
-        prediction = model.predict([processed_text])[0]
-        probability = model.predict_proba([processed_text])[0][1]
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'prediction': int(prediction),
-                'probability': float(probability),
-                'model_version': current_version
-            }
-        })
+        try:
+            # Preprocess the input text
+            processed_text = preprocess_text(email_text)
+            
+            # Make prediction
+            prediction = model.predict([processed_text])[0]
+            
+            # Get prediction probabilities
+            try:
+                probabilities = model.predict_proba([processed_text])
+                probability = float(probabilities[0][1])  # Probability of class 1 (spam)
+            except (AttributeError, IndexError) as e:
+                print(f"Warning: Could not get probability scores: {str(e)}")
+                probability = 1.0 if prediction == 1 else 0.0
+            
+            return jsonify({
+                'success': True,
+                'data': {
+                    'prediction': int(prediction),
+                    'probability': probability,
+                    'model_version': current_version
+                }
+            })
+            
+        except Exception as e:
+            error_msg = f"Error during prediction: {str(e)}"
+            print(error_msg)
+            import traceback
+            traceback.print_exc()
+            
+            # Check specifically for vectorizer errors
+            if "idf vector is not fitted" in str(e).lower():
+                return jsonify({
+                    'success': False,
+                    'error': 'Model vectorizer not properly initialized',
+                    'status': 'model_initialization_error',
+                    'details': str(e)
+                }), 500
+                
+            return jsonify({
+                'success': False,
+                'error': 'Error processing prediction',
+                'details': str(e),
+                'status': 'prediction_error'
+            }), 500
     
     except Exception as e:
-        print(f"Error processing request: {str(e)}")
+        error_msg = f"Unexpected error in predict endpoint: {str(e)}"
+        print(error_msg)
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'success': False,
-            'error': str(e)
+            'error': 'Internal server error',
+            'status': 'server_error',
+            'details': str(e) if str(e) else 'No additional details available'
         }), 500
 
 # If running directly (not imported)
