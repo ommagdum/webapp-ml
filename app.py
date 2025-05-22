@@ -55,6 +55,12 @@ def get_model():
     
     if model is None:
         try:
+            # Suppress specific warnings for cleaner logs
+            import warnings
+            from sklearn.exceptions import InconsistentVersionWarning
+            warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
+            
+            print("Loading model metadata...")
             metadata = model_manager.load_metadata()
             version = metadata.get('current_version')
             
@@ -99,11 +105,19 @@ def get_model():
                             "urgent action required immediately"
                         ])
             else:
-                print(f"Model file not found: {model_path}")
-                raise FileNotFoundError(f"Model file not found: {model_path}")
+                error_msg = (
+                    f"Model file not found: {model_path}\n"
+                    f"Available files in models directory: {os.listdir(model_manager.models_dir) if os.path.exists(model_manager.models_dir) else 'Directory not found'}"
+                )
+                print(error_msg)
+                raise FileNotFoundError(error_msg)
         except Exception as e:
-            print(f"Error loading model: {str(e)}")
-            raise
+            error_msg = f"Error loading model: {str(e)}\nError type: {type(e).__name__}"
+            print(error_msg)
+            import traceback
+            traceback.print_exc()
+            # Return None for model if there's an error, but don't crash
+            return None, version
     
     return model, version
 
@@ -326,13 +340,26 @@ def predict():
     """
     try:
         # Get model instance (thread-safe)
-        model, current_version = get_model()
-        
-        if model is None:
+        try:
+            model, current_version = get_model()
+            
+            if model is None:
+                return jsonify({
+                    'success': False,
+                    'error': 'Model not loaded. Please check server logs for details.',
+                    'status': 'model_unavailable'
+                }), 503
+        except Exception as e:
+            error_msg = f"Failed to load model: {str(e)}"
+            print(f"Error in predict endpoint: {error_msg}")
+            import traceback
+            traceback.print_exc()
             return jsonify({
                 'success': False,
-                'error': 'Model not available'
-            }), 503
+                'error': 'Failed to load model',
+                'details': str(e),
+                'status': 'model_loading_error'
+            }), 500
         
         data = request.get_json()
         
