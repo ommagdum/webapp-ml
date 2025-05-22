@@ -147,44 +147,18 @@ def load_model():
         FileNotFoundError: If no model can be found (primary or fallback)
         Exception: For other errors during model loading that cannot be recovered from
     """
-    global model, current_model_version
-    
     try:
-        metadata = model_manager.load_metadata()
-        version = metadata.get('current_version')
+        # Get the model and version from get_model()
+        model, version = get_model()
         
-        # Only reload if version changed
-        if version != current_model_version:
-            print(f"Loading model version: {version}")
-            model_path = os.path.join(model_manager.models_dir, f"{version}.pkl")
+        if model is None:
+            raise FileNotFoundError("No models available")
             
-            if os.path.exists(model_path):
-                model = joblib.load(model_path)
-                current_model_version = version
-                print(f"Successfully loaded model version: {version}")
-            else:
-                print(f"Model file not found: {model_path}")
-                raise FileNotFoundError(f"Model file not found: {model_path}")
+        return version
+    
     except Exception as e:
         print(f"Error loading model: {str(e)}")
-        # If this is initial load and failed, try to load the default model
-        if current_model_version is None:
-            try:
-                # Fallback to the original model path
-                print("Attempting to load default model...")
-                default_model_path = 'spam_detector_model.joblib'
-                if os.path.exists(default_model_path):
-                    model = joblib.load(default_model_path)
-                    current_model_version = "default"
-                    print("Successfully loaded default model")
-                else:
-                    print(f"Default model not found at: {default_model_path}")
-                    raise FileNotFoundError(f"Default model not found at: {default_model_path}")
-            except Exception as fallback_error:
-                print(f"Error loading default model: {str(fallback_error)}")
-                raise
-    
-    return current_model_version
+        raise
 
 def model_watcher():
     """Background thread that periodically checks for model updates.
@@ -296,7 +270,7 @@ def health():
     return jsonify({
         'status': 'up',
         'message': 'ML service is running',
-        'model_version': current_model_version,
+        'model_version': version,
         'model_status': model_status
     })
 
