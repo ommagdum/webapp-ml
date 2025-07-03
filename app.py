@@ -372,6 +372,11 @@ def health():
             'service_ready': False,
             'timestamp': time.time()
         }), 500
+    
+
+@app.route("/ping")
+def ping():
+    return jsonify(status="ok")
 
 @app.route('/predict', methods=['POST'])
 def predict():
