@@ -29,55 +29,45 @@ model_manager = ModelManager(models_dir='models')
 ml_routes = Blueprint('ml_routes', __name__)
 
 def get_current_model():
-    """Get the current model from the global variable in app.py.
-    
-    This function imports the model from app.py to avoid circular imports.
-    It provides access to the currently loaded model instance that is
-    being used for predictions.
-    
-    Returns:
-        object: The currently loaded ML model instance from app.py
-    """
-    from app import model
-    return model
+    """Get the current model from the global model manager."""
+    global model_manager
+    try:
+        metadata = model_manager.load_metadata()
+        current_version = metadata.get('current_version', 'initial_model')
+        model_path = model_manager.get_model_path(current_version)
+        return joblib.load(model_path)
+    except Exception as e:
+        print(f"Error loading current model: {str(e)}")
+        return None
+
 
 @ml_routes.route('/retrain', methods=['POST'])
 def retrain():
-    """Retrain the model with new training data.
-    
-    This endpoint accepts new training data via a POST request and uses it to
-    retrain the current model. It implements an automatic quality control system
-    that rolls back to the previous model version if the accuracy drops significantly.
-    
-    The function:
-    1. Receives new training data in JSON format
-    2. Creates a new model version with timestamp-based ID
-    3. Retrains the model with the new data
-    4. Evaluates the new model's accuracy
-    5. Automatically rolls back if accuracy drops below threshold
-    6. Otherwise, registers the new model version
-    
-    Request Body:
-        JSON array of training samples, each with 'text' and 'label' fields
-        
-    Returns:
-        JSON: A response containing:
-            - success: Boolean indicating if retraining was successful
-            - new_version: ID of the new model version (if successful)
-            - accuracy: Accuracy score of the new model
-            - message: Explanation if model was rolled back
-            - error: Error message if an exception occurred
-            
-    Response Codes:
-        - 200: Successful retraining or controlled rollback
-        - 500: Server error during processing
-    """
+    """Retrain the model with new training data."""
     try:
-        training_data = request.get_json()
-        new_version = datetime.now().strftime('%Y%m%d_%H%M')
-        model_path = os.path.join(model_manager.models_dir, f"{new_version}.joblib")  # Default to .joblib
+        data = request.get_json()
+        
+        # Handle Spring Boot format: {"trainingData": [{"content": "...", "label": ...}]}
+        if isinstance(data, dict) and 'trainingData' in data:
+            training_data = data['trainingData']
+            # Convert 'content' to 'text' for the ML service
+            for item in training_data:
+                if 'content' in item and 'text' not in item:
+                    item['text'] = item['content']
+        else:
+            # Direct format (fallback)
+            training_data = data
+        
+        new_version = datetime.now().strftime('%Y%m%d_%H%M%S')
+        model_path = os.path.join(model_manager.models_dir, f"{new_version}.joblib")
         
         current_model = get_current_model()
+        if current_model is None:
+            return jsonify({
+                "success": False,
+                "error": "Current model not available for retraining"
+            }), 500
+            
         accuracy = retrain_model(current_model, training_data, model_path)
         
         if model_manager.should_rollback(accuracy):

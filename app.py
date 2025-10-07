@@ -276,7 +276,7 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
 # Register blueprints
-app.register_blueprint(ml_routes, url_prefix='/ml')
+app.register_blueprint(ml_routes, url_prefix='/')
 
 # Initialize model manager and model on startup
 initialize_model_manager()

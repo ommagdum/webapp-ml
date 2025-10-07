@@ -20,11 +20,13 @@ Typical usage example:
 
 import joblib
 from sklearn.metrics import accuracy_score
+import os
 import re
 import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from nltk.stem import PorterStemmer
+
 
 def preprocess_training_data(text_samples):
     """Preprocess text data for model training.
