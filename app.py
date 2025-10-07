@@ -378,10 +378,6 @@ def health():
 def ping():
     return jsonify(status="ok")
 
-@app.route("/ping")
-def ping():
-    return jsonify(status="ok")
-
 @app.route('/predict', methods=['POST'])
 def predict():
     """Prediction endpoint for spam detection.
